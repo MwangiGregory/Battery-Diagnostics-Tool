@@ -19,6 +19,9 @@ PROTECTIONS_DATA_START = "PROTECTIONS_DATA_START"
 PROTECTIONS_DATA_END = "PROTECTIONS_DATA_END"
 REPORT_DATA_START = "REPORT_DATA_START"
 REPORT_DATA_END = "REPORT_DATA_END"
+BATTERY_SN_START = "BATTERY_SERIAL_NUMBER_START"
+BATTERY_SN_STOP = "BATTERY_SERIAL_NUMBER_STOP"
+
 
 BAUD_RATE = 9600
 
@@ -32,6 +35,7 @@ def main():
     min_max_delta_data = {}
     protections_data = []
     report_data = []
+    battery_sn = ''
 
     recording = True
     recording_generic_data = False
@@ -39,6 +43,7 @@ def main():
     recording_min_max_delta = False
     recording_protection_data = False
     recording_report_data = False
+    record_battery_sn = False
 
     stat.start()
 
@@ -62,6 +67,7 @@ def main():
         stat.update()
 
         line_bytes = microcontroller.readline()
+        # print(line_bytes)
         message = line_bytes.decode(encoding='ascii').strip()
         # print(message)
 
@@ -151,6 +157,8 @@ def main():
         elif message == REPORT_DATA_END:
             recording_report_data = False
             recording = False
+            if battery_sn:
+                report_data.append("\n\n" + battery_sn + "\n\n")
 
             # display report data
             report_data_panel = Panel(
@@ -159,6 +167,11 @@ def main():
                 padding=1
             )
             console.print(report_data_panel)
+
+        elif message == BATTERY_SN_START:
+            record_battery_sn = True
+        elif message == BATTERY_SN_STOP:
+            record_battery_sn = False
 
         message_parts = message.split("=")
 
@@ -188,6 +201,9 @@ def main():
             stat.update("Recording report data")
             if message_parts[0] not in report_data:
                 report_data.append(message_parts[0])
+        elif record_battery_sn:
+            stat.update("Got battery serial number")
+            battery_sn = message_parts[0]
 
     stat.stop()
 

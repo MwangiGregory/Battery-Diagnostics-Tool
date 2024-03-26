@@ -7,8 +7,13 @@
 long unsigned int rxId = 0;
 unsigned char len = 0;
 unsigned char rxBuf[8];
-char msgString[128]; // array to store serial string
-char batteryId[22];  // Battery serial number string
+char msgString[128];     // array to store serial string
+int cell_Volt_Delta = 0; // variable for delta between max cell voltage and min cell voltage
+int maxCell;
+int minCell;
+int maxTemp;
+int minTemp;
+char batteryId[22]; // Battery serial number string
 
 uint16_t volt, curr, remCap = 0;
 uint16_t fullCap, rSOC, nCycles = 0;
@@ -20,10 +25,10 @@ uint16_t cell_7, cell_8, cell_9 = 0;
 uint16_t cell_10, cell_11, cell_12 = 0;
 uint16_t cell_13, cell_14, cell_15 = 0;
 uint16_t cell_16, cell_17, cell_18 = 0;
-uint16_t cell_19, cell_20, cell_21 = 0;
-uint16_t cell_22, cell_23, cell_24 = 0;
-uint16_t cell_25, cell_26, cell_27 = 0;
-uint16_t cell_28, cell_29, cell_30 = 0;
+uint16_t cell_19, cell_20 = 0;
+// uint16_t cell_22, cell_23, cell_24 = 0;
+// uint16_t cell_25, cell_26, cell_27 = 0;
+// uint16_t cell_28, cell_29, cell_30 = 0;
 uint16_t Bal_17_33, Bal_1_16, protection, software;
 
 // variables for protections triggered
@@ -55,11 +60,15 @@ int volt_fluctuation;
 // variables to compute max, min and cell voltage delta in func
 
 int Cell_Delta = 0;
-int arr[30] = {cell_1, cell_2, cell_3, cell_4, cell_5, cell_6, cell_7, cell_8, cell_9, cell_10, cell_11, cell_12, cell_13, cell_14, cell_15, cell_16, cell_17, cell_18, cell_19, cell_20, cell_21, cell_22, cell_23, cell_24, cell_25, cell_26, cell_27, cell_28, cell_29, cell_30}; // initialize array of cell voltages
-int max_cell = arr[0];
-int min_cell = arr[0];
+// int arr[20] = {cell_1, cell_2, cell_3, cell_4, cell_5, cell_6, cell_7, cell_8, cell_9, cell_10, cell_11, cell_12, cell_13, cell_14, cell_15, cell_16, cell_17, cell_18, cell_19, cell_20}; // initialize array of cell voltages
+// int max_cell = arr[0];
+// int min_cell = arr[0];
 int i;
 int j;
+int PackVolt; // to check whether the sum of cell voltage * 20 is equal to battery pack voltage
+int l;        // variable for for loop to check whether the sum of cell voltage * 20 is equal to battery pack voltage
+int m;        // variable for for loop to check whether cell voltages within (3V to 4.15V range)
+
 unsigned long canID = 0x100;
 
 const int CHUNK_SIZE = 350;
@@ -69,7 +78,7 @@ int TimeCounter = 0;
 int startTime = millis();
 
 // CAN Transceiver >> Arduino Nano
-//  INT >> D2
+//  INT >> D7
 //  SCK >> D13
 //  SI >> D11
 //  SO >> D12
@@ -78,17 +87,18 @@ int startTime = millis();
 //  VCC >> 5V
 
 void PerformHandshake();
+void GetBatteryBroadcastInfo();
 void GetBatteryId();
 void canMain();
 void sendRemoteMessages(unsigned long canID);
 void messageDetails(unsigned long ID, char msg[]);
-void MaxMinDeltaFunc();
+// void MaxMinDeltaFunc();
 void DiagnosticsReport();
 void Protections();
 int CANtimer = millis();
 
 // setting can pins
-#define CAN0_INT 2 // set INT to pin 2
+#define CAN0_INT 2 // set INT to pin 7
 #define CANCS 10
 MCP_CAN CAN0(CANCS);
 uint8_t count = 0;
@@ -96,12 +106,8 @@ uint8_t count = 0;
 void setup()
 {
     Serial.begin(9600);
-    PerformHandshake();
+    // PerformHandshake();
     delay(1000);
-
-    // GetBatteryId();
-    // Print battery serial number
-    // Serial.println(batteryId);
 
     if (CAN0.begin(MCP_ANY, CAN_250KBPS, MCP_8MHZ) == CAN_OK)
         Serial.println(F("MCP2515 Initialized Successfully!"));
@@ -112,6 +118,18 @@ void setup()
 
     pinMode(CAN0_INT, INPUT); // Configuring pin for /INT input
                               // digitalWrite(relay, HIGH);               //can Serial.println("MCP2515 Library Receive Example...");
+
+    // GetBatteryId();
+    // Print battery serial number
+
+    Serial.println("BATTERY_SERIAL_NUMBER_START");
+    Serial.println(batteryId);
+    Serial.println("BATTERY_SERIAL_NUMBER_STOP");
+
+    Serial.println("Delaying for 5 secs");
+    delay(5000);
+    // print all battery bradcast info: Highest cell voltage, lowest cell voltage, highest temperature reading and lowest temperature reading
+    // GetBatteryBroadcastInfo();
 }
 
 void loop()
@@ -127,26 +145,72 @@ void loop()
 
     // MaxMinDeltaFunc(); //calling function to compute max, min and cell voltage delta
     // DiagnosticsReport();
+
+    delay(1000);
 }
 
 void PerformHandshake()
 {
 #define PROGRAM_INIT_MESSAGE "BATTERY_DIAGNOSTICS_TOOL"
 #define CONNECTED_MSG "CONNECTED"
-#define HANDSHAKE_COMPLETE_MSG "HANDSHAKE_COMPLETE"
+#define HANDSHAKE_COMPLETE_MSG "HANDSHAKE_COMPLETE\n"
 
     String expected = CONNECTED_MSG;
 
-    Serial.println(PROGRAM_INIT_MESSAGE);
+    // if (Serial)
+    // {
+    Serial.println("BATTERY_DIAGNOSTICS_TOOL");
 
     while (!Serial.available())
     {
+        /* Wait until you receive a message */
     }
 
     String response = Serial.readStringUntil('\0');
 
     if (response == expected)
-        Serial.println(HANDSHAKE_COMPLETE_MSG);
+        Serial.println("HANDSHAKE_COMPLETE");
+    // }
+}
+
+// get battery broadcast data
+void GetBatteryBroadcastInfo()
+{
+    // Check if receive buffer is ready to be read
+    if (!digitalRead(CAN0_INT))
+    {
+        CAN0.readMsgBuf(&rxId, &len, rxBuf);
+        // Check if the received id is the one representing battery broadcast data
+        if ((rxId & 0x1FFFFFFF) == 0x10261051)
+        {
+            // maximum cell voltage
+            maxCell = (rxBuf[0] << 8) | rxBuf[1];
+            Serial.print(F("\nMaximum Cell Voltage"));
+            Serial.println(maxCell);
+
+            // minimum cell voltage
+            minCell = (rxBuf[2] << 8) | rxBuf[3];
+            Serial.print(F("\nMinimum Cell Voltage"));
+            Serial.println(minCell);
+
+            /// flag cell delta greater than 100mV
+            cell_Volt_Delta = maxCell - minCell;
+            Serial.print(F("\nCell Voltage Delta"));
+            Serial.println(cell_Volt_Delta);
+            if (cell_Volt_Delta > 100)
+                Serial.print(F("The cell voltage delta is above the recommended threshold. Kindly take the battery to the battery lab for further troubleshooting"));
+
+            // Highest temperature reading
+            maxTemp = rxBuf[5];
+            Serial.print(F("\nHighest Temperature Reading"));
+            Serial.println(maxTemp);
+
+            // Lowest temperature reading
+            minTemp = rxBuf[6];
+            Serial.print(F("\nMinimum Temperature Reading"));
+            Serial.println(minTemp);
+        }
+    }
 }
 
 /**
@@ -391,7 +455,7 @@ void messageDetails(unsigned long ID, char msg[])
         Serial.println(F("\n\n Cell 1 Voltage, Cell 2 Voltage, Cell 3 Voltage "));
 
         // Cell 1 voltage value in mV
-        cell_1 = (msg[0] << 8) | msg[1];
+        cell_1 = ((msg[0] << 8) | (msg[1]));
 
         // Cell 2 voltage value in mV
         cell_2 = (msg[2] << 8) | msg[3];
@@ -409,6 +473,16 @@ void messageDetails(unsigned long ID, char msg[])
 
         Serial.print(F("\n\n  Cell 3 mV="));
         Serial.println(cell_3);
+      // int cellVoltages[3];
+
+      // for (int i = 0, k = 0; i < 6, k < 3; i+=2, k++) {
+      //   int cellVoltage = (rxBuf[i] << 8) | rxBuf[i + 1];
+      //   cellVoltages[k] = cellVoltage;
+      // }
+
+      // for (int j = 0; j < 3; j++) {
+      //   Serial.print("Cellvoltage: ");
+      //   Serial.println(cellVoltages[j]);
     }
     break;
 
@@ -417,13 +491,13 @@ void messageDetails(unsigned long ID, char msg[])
         Serial.println(F("\n\n Cell 4 Voltage, Cell 5 Voltage, Cell 6 Voltage "));
 
         // Cell 4 voltage value in mV
-        cell_4 = (msg[0] << 8) | msg[1];
+        cell_4 = (msg[1] << 8) | msg[0];
 
         // Cell 5 voltage value in mV
-        cell_5 = (msg[2] << 8) | msg[3];
+        cell_5 = (msg[3] << 8) | msg[2];
 
         // Cell 6 voltage value in mV
-        cell_6 = (msg[4] << 8) | msg[5];
+        cell_6 = (msg[5] << 8) | msg[4];
 
         Serial.print(F("\n\n Cell 4 mV="));
         Serial.println(cell_4);
@@ -537,132 +611,57 @@ void messageDetails(unsigned long ID, char msg[])
         // Cell 20 voltage value in mV
         cell_20 = (msg[2] << 8) | msg[3];
 
-        // Cell 21 voltage value in mV
-        cell_21 = (msg[4] << 8) | msg[5];
-
         Serial.print(F("\n\n Cell 19 mV="));
         Serial.println(cell_19);
         Serial.print(F("\n\n Cell 20 mV="));
         Serial.println(cell_20);
 
-        Serial.print(F("\n\n  Cell 21 mV="));
-        Serial.println(cell_21);
-    }
-    break;
-
-    case 0x10E:
-    {
-        Serial.println(F("\n\n Cell 22 Voltage, Cell 23 Voltage, Cell 24 Voltage "));
-
-        // Cell 22 voltage value in mV
-        cell_22 = (msg[0] << 8) | msg[1];
-
-        // Cell 23 voltage value in mV
-        cell_23 = (msg[2] << 8) | msg[3];
-
-        // Cell 24 voltage value in mV
-        cell_24 = (msg[4] << 8) | msg[5];
-
-        Serial.print(F("\n\n Cell 22 mV="));
-        Serial.println(cell_22);
-        Serial.print(F("\n\n Cell 23 mV="));
-        Serial.println(cell_23);
-
-        Serial.print(F("\n\n  Cell 24 mV="));
-        Serial.println(cell_24);
-    }
-    break;
-
-    case 0x10F:
-    {
-        Serial.println(F("\n\n Cell 25 Voltage, Cell 26 Voltage, Cell 27 Voltage "));
-
-        // Cell 25 voltage value in mV
-        cell_25 = (msg[0] << 8) | msg[1];
-
-        // Cell 26 voltage value in mV
-        cell_26 = (msg[2] << 8) | msg[3];
-
-        // Cell 27 voltage value in mV
-        cell_27 = (msg[4] << 8) | msg[5];
-
-        Serial.print(F("\n\n Cell 25 mV="));
-        Serial.println(cell_25);
-        Serial.print(F("\n\n Cell 26 mV="));
-        Serial.println(cell_26);
-
-        Serial.print(F("\n\n  Cell 27 mV="));
-        Serial.println(cell_27);
-    }
-    break;
-
-    case 0x110:
-    {
-        Serial.println(F("\n\n Cell 28 Voltage, Cell 29 Voltage, Cell 30 Voltage "));
-
-        // Cell 28 voltage value in mV
-        cell_28 = (msg[0] << 8) | msg[1];
-
-        // Cell 29 voltage value in mV
-        cell_29 = (msg[2] << 8) | msg[3];
-
-        // Cell 30 voltage value in mV
-        cell_30 = (msg[4] << 8) | msg[5];
-
-        Serial.print(F("\n\n Cell 28 mV="));
-        Serial.println(cell_28);
-        Serial.print(F("\n\n Cell 29 mV="));
-        Serial.println(cell_29);
-
-        Serial.print(F("\n\n  Cell 30 mV="));
-        Serial.println(cell_30);
-
         // Value that indicates the end of streaming cell data values
         Serial.println(F("CELL_DATA_END"));
 
-        MaxMinDeltaFunc(); // calling function to compute max, min and cell voltage
+        // MaxMinDeltaFunc(); // calling function to compute max, min and cell voltage
         DiagnosticsReport();
         // Value that indicates the end of streaming data values
+        break;
     }
-    break;
     }
 }
 
-void MaxMinDeltaFunc()
-{
+// void MaxMinDeltaFunc()
+// {
 
-    // Array to find min and max cells
+//     // Array to find min and max cells
 
-    for (int i = 0; i < 29; i++)
-    {
-        if (arr[i] > max_cell)
-        {
-            max_cell = arr[i];
-        }
-    }
-    for (int j = 0; j < 29; j++)
-    {
-        if (arr[j] < min_cell)
-        {
-            min_cell = arr[j];
-        }
-    }
+//     for (int i = 0; i < 29; i++)
+//     {
+//         if (arr[i] > max_cell)
+//         {
+//             max_cell = arr[i];
+//         }
+//     }
+//     for (int j = 0; j < 29; j++)
+//     {
+//         if (arr[j] < min_cell)
+//         {
+//             min_cell = arr[j];
+//         }
+//     }
 
-    Cell_Delta = max_cell - min_cell; // computing cell delta
+//     Cell_Delta = max_cell - min_cell; // computing cell delta
 
-    Serial.println(F("MIN_MAX_DELTA_START"));
-    Serial.print(F("MaxCell="));
-    Serial.println(max_cell);
-    Serial.print(F("Cell Number Max="));
-    Serial.println(i + 1);
-    Serial.print(F("MinCell="));
-    Serial.println(min_cell);
-    Serial.print(F("Cell Number Min="));
-    Serial.println(j + 1);
-    Serial.print(F("Cell Voltage Delta="));
-    Serial.println(Cell_Delta);
-    Serial.println(F("MIN_MAX_DELTA_END"));
-}
+//     Serial.println(F("MIN_MAX_DELTA_START"));
+//     Serial.print(F("MaxCell="));
+//     Serial.println(max_cell);
+//     Serial.print(F("Cell Number="));
+//     Serial.println(i + 1);
+//     Serial.print(F("MinCell="));
+//     Serial.println(min_cell);
+//     Serial.print(F("Cell Number="));
+//     Serial.println(j + 1);
+//     Serial.print(F("Cell Voltage Delta="));
+//     Serial.println(Cell_Delta);
+//     Serial.println(F("MIN_MAX_DELTA_END"));
+// }
 
 void Protections()
 {
@@ -729,11 +728,21 @@ void DiagnosticsReport()
 {
     Serial.println(F("REPORT_DATA_START"));
     Serial.println(F("Battery software version"));
-    if (volt < 55)
+
+    for (l = 0; l < 19; l++)
+    {
+        // PackVolt = arr[l] + arr[l + 1];
+    }
+    PackVolt = PackVolt * 20;
+    if (PackVolt != volt)
+    {
+        Serial.println(F("The cell voltages do not add up to the pack voltage"));
+    }
+    if (volt < 5500)
     {
         Serial.println(F("Pack voltage below threshold. Kindly take battery to the lab for boost charging"));
     }
-    if (volt > 84)
+    if (volt > 8400)
     {
         Serial.println(F("Pack voltage above threshold. Kindly take battery to the lab for troubleshooting"));
     }
@@ -748,11 +757,28 @@ void DiagnosticsReport()
     {
         Serial.println(F("Current reading despite battery being in idle state. Kindly take the battery to the lab for troubleshooting"));
     }
+
+    // checking that all cell voltage readings are within 3V-4.15V and within 50mV of each other
+    // for (m = 0; m < 20; m++)
+    // {
+    //     if (arr[m] > 4150)
+    //     {
+    //         Serial.println((arr[m]));
+    //         Serial.println(F("Cell voltage is above the 4150mV threshold"));
+    //     }
+    //     if (arr[m] < 3000)
+    //     {
+    //         Serial.println((arr[m]));
+    //         Serial.println(F("Cell voltage is below the 3000mV threshold"));
+    //     }
+    //     // iterate and check if difference between each cell voltage is greater than 50mV
+    // }
+
     void protections();
 
-    if (Cell_Delta > 50)
-    {
-        Serial.println(F("The cell delta is above 50mV threshold. Kindly take the battery to the lab for troubleshooting"));
-    }
+    // if (Cell_Delta > 50)
+    // {
+    //     Serial.println(F("The cell delta is above 50mV threshold. Kindly take the battery to the lab for troubleshooting"));
+    // }
     Serial.println(F("REPORT_DATA_END"));
 }
