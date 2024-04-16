@@ -38,6 +38,7 @@ def find_microcontroller(
             message = ser.readline().decode(
                 errors='ignore',
                 encoding='ascii').strip()
+            print(message, message == start_message)
 
             if message == start_message:
                 # Found microcontroller that implements our protocol

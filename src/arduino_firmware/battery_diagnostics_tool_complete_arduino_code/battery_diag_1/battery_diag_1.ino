@@ -106,7 +106,7 @@ uint8_t count = 0;
 void setup()
 {
     Serial.begin(9600);
-    // PerformHandshake();
+    PerformHandshake();
     delay(1000);
 
     if (CAN0.begin(MCP_ANY, CAN_250KBPS, MCP_8MHZ) == CAN_OK)
@@ -120,6 +120,7 @@ void setup()
                               // digitalWrite(relay, HIGH);               //can Serial.println("MCP2515 Library Receive Example...");
 
     // GetBatteryId();
+    getBatteryId(&rxId, &len, rxBuf, batteryId);
     // Print battery serial number
 
     Serial.println("BATTERY_SERIAL_NUMBER_START");
@@ -213,55 +214,91 @@ void GetBatteryBroadcastInfo()
     }
 }
 
+void getBatteryId(unsigned long *id, byte *len, byte *buf, char *batteryIdBuf) {
+  
+  #define READY_TO_READ LOW
+
+  bool recording = true;
+  int batteryIdIndex = 0;
+  byte rtrMsg[] = {0, 0, 0, 0, 0, 0, 0, 0};
+
+  CAN0.sendMsgBuf(0x100, 8, rtrMsg); // Signal to wakeup battery bms
+
+  while (recording) {
+
+    if(digitalRead(CAN0_INT) == READY_TO_READ)
+    {
+      CAN0.readMsgBuf(id, len, buf);
+
+      if ((*id & 0x1FFFFFFF) == 0x10261052)
+      {
+        for (char i = 1; i < *len; i++, batteryIdIndex++) {
+          batteryIdBuf[batteryIdIndex] = buf[i];
+
+          if ((buf[0] == (byte)0x02 && buf[i] == (byte)0x00) ||
+              (buf[0] == (byte)0x02 && i == 7)) {
+
+            recording = false;
+            Serial.println(batteryIdIndex);
+            Serial.println(rxBuf[i]);
+            
+            break;
+          }
+        }
+      }
+    }
+  }
+}
+
 /**
  * GetBatteryId - read the serial number off of a Roam superpack
  * battery, that uses a baud rate of 250KB/s for its CAN bus.
  *
  * return - void
  */
-void GetBatteryId()
-{
-    int batteryIdIndex = 0;
-    const uint8_t BATTERY_ID_LAST_INDEX = 21;
+// void GetBatteryId()
+// {
+//     int batteryIdIndex = 0;
+//     const uint8_t BATTERY_ID_LAST_INDEX = 21;
 
-    // Loop until you get the battery serial number
-    while (true)
-    {
-        // Set the null terminating character
-        if (batteryIdIndex == BATTERY_ID_LAST_INDEX)
-        {
-            batteryId[batteryIdIndex] = '\0';
-            break;
-        }
-        // Check if receive buffer is ready to be read
-        else if (!digitalRead(CAN0_INT))
-        {
-            CAN0.readMsgBuf(&rxId, &len, rxBuf);
-            // Check if the received id is the one representing battery Id data
-            if ((rxId & 0x1FFFFFFF) == 0x10261052)
-            {
-                /**
-                 * Battery Id is received in 3 sections. Each data payload is
-                 * 8 bytes long, with the MSB indicating the section number, e.g.
-                 * 00, 01, 02. The MSB of each section is skipped.
-                 * The rest of the bytes represent the sections of the battery
-                 * serial number data.
-                 * Here we get the characters from rxBuf and store the contiguously
-                 * in the battery Id buffer.
-                 */
-                for (byte i = 0; i < len; i++)
-                {
-                    if (i == 0)
-                    {
-                        continue;
-                    }
-                    batteryId[batteryIdIndex] = rxBuf[i];
-                    batteryIdIndex++;
-                }
-            }
-        }
-    }
-}
+//     // Loop until you get the battery serial number
+//     while (true)
+//     {
+//         // Set the null terminating character
+//         if (batteryIdIndex == BATTERY_ID_LAST_INDEX)
+//         {
+//             batteryId[batteryIdIndex] = '\0';
+//             break;
+//         }
+//         // Check if receive buffer is ready to be read
+//         else if (!digitalRead(CAN0_INT))
+//         {
+//             CAN0.readMsgBuf(&rxId, &len, rxBuf);
+//             // Check if the received id is the one representing battery Id data
+//             if ((rxId & 0x1FFFFFFF) == 0x10261052)
+//             {
+//                 /**
+//                  * Battery Id is received in 3 sections. Each data payload is
+//                  * 8 bytes long, with the MSB indicating the section number, e.g.
+//                  * 00, 01, 02. The MSB of each section is skipped.
+//                  * The rest of the bytes represent the sections of the battery
+//                  * serial number data.
+//                  * Here we get the characters from rxBuf and store the contiguously
+//                  * in the battery Id buffer.
+//                  */
+//                 for (byte i = 0; i < len; i++)
+//                 {
+//                     if (i == 0)
+//                     {
+//                         continue;
+//                     }
+//                     batteryId[batteryIdIndex] = rxBuf[i];
+//                     batteryIdIndex++;
+//                 }
+//             }
+//         }
+//     }
+// }
 
 void canMain()
 {
@@ -473,16 +510,16 @@ void messageDetails(unsigned long ID, char msg[])
 
         Serial.print(F("\n\n  Cell 3 mV="));
         Serial.println(cell_3);
-      // int cellVoltages[3];
+        // int cellVoltages[3];
 
-      // for (int i = 0, k = 0; i < 6, k < 3; i+=2, k++) {
-      //   int cellVoltage = (rxBuf[i] << 8) | rxBuf[i + 1];
-      //   cellVoltages[k] = cellVoltage;
-      // }
+        // for (int i = 0, k = 0; i < 6, k < 3; i+=2, k++) {
+        //   int cellVoltage = (rxBuf[i] << 8) | rxBuf[i + 1];
+        //   cellVoltages[k] = cellVoltage;
+        // }
 
-      // for (int j = 0; j < 3; j++) {
-      //   Serial.print("Cellvoltage: ");
-      //   Serial.println(cellVoltages[j]);
+        // for (int j = 0; j < 3; j++) {
+        //   Serial.print("Cellvoltage: ");
+        //   Serial.println(cellVoltages[j]);
     }
     break;
 

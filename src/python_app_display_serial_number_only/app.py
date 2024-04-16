@@ -40,6 +40,7 @@ def main():
         stat.update()
         line_bytes = microcontroller.readline()
         message = line_bytes.decode(encoding='ascii').strip()
+        print(line_bytes, message)
         # Toggle recording flag
         if message == BATTERY_SN_START:
             record_battery_sn = True
